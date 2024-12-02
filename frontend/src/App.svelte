@@ -1,5 +1,6 @@
 <script>
   import { onMount } from "svelte";
+  import { version } from '../package.json'
 
   let name = "";
   let tickets = "";
@@ -142,6 +143,8 @@
     window.history.pushState({}, "", `?roomId=${roomId}`);
   }
 </script>
+
+<div class="version">v{version}</div>
 
 {#if !connected}
   <div class="app">
@@ -504,4 +507,12 @@
     opacity: 0.5;
     cursor: not-allowed;
   }
+
+  .version {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  font-size: 0.8rem;
+  color: #666;
+}
 </style>
