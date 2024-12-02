@@ -69,8 +69,8 @@ func countActiveRooms() int {
 
 func toRoomData(room *Room) RoomData {
 	users := make(map[string]string)
-	for name, user := range room.Users {
-		users[name] = user.Name
+	for name := range room.Users {
+		users[name] = name // Just use the key as the name
 	}
 	return RoomData{
 		ID:            room.ID,

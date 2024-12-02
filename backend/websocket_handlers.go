@@ -7,23 +7,23 @@ import (
 )
 
 func setupWebSocketConnection(conn *websocket.Conn, room *Room, userName string, isGameMaster bool) {
-	setupCloseHandler(conn, room, userName)
-	user := &User{Name: userName, Conn: conn} // Create user with connection
+	user := &User{Name: userName, Conn: conn}
 
 	room.Mu.Lock()
 	if isGameMaster && room.GameMaster == "" {
 		room.GameMaster = userName
-		log.Printf("Set game master %s for room %s", userName, room.ID)
 	}
-	room.Users[userName] = user // Store user with active connection
+	room.Users[userName] = user
 	room.Mu.Unlock()
 
 	saveRoom(room)
 	logEvent(LogEntry{Event: "user_joined", RoomID: room.ID, User: userName})
 
-	defer handlePanic(conn, userName, room.ID)
+	// Move broadcast after saving room state
 	broadcastRoomState(room)
 
+	setupCloseHandler(conn, room, userName)
+	defer handlePanic(conn, userName, room.ID)
 	handleMessages(conn, room, userName)
 }
 
@@ -54,6 +54,11 @@ func handleMessages(conn *websocket.Conn, room *Room, userName string) {
 
 func broadcastRoomState(room *Room) {
 	room.Mu.RLock()
+	// Make a copy of users to avoid nil pointer
+	users := make(map[string]*User)
+	for name, user := range room.Users {
+		users[name] = user
+	}
 	roomData := toRoomData(room)
 	room.Mu.RUnlock()
 
@@ -62,8 +67,8 @@ func broadcastRoomState(room *Room) {
 		Payload: roomData,
 	}
 
-	for _, user := range room.Users {
-		if user.Conn != nil {
+	for _, user := range users {
+		if user != nil && user.Conn != nil {
 			if err := user.Conn.WriteJSON(msg); err != nil {
 				log.Printf("Error broadcasting to user %s: %v", user.Name, err)
 			}
