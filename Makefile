@@ -1,7 +1,7 @@
 REGISTRY=registry.germainleignel.com/personal
 VERSION=$(shell date +%Y%m%d-%H%M%S)
 
-.PHONY: all backend frontend deploy flush trigger-flush-redis
+.PHONY: all backend frontend deploy
 
 all: backend frontend flush deploy
 
@@ -21,21 +21,7 @@ frontend:
 	docker push $(REGISTRY)/planning-frontend:$(VERSION) && \
 	docker push $(REGISTRY)/planning-frontend:latest
 
-flush:
-	cd flush && \
-	docker build -t planning-flush . && \
-	docker tag planning-flush $(REGISTRY)/planning-flush:$(VERSION) && \
-	docker tag planning-flush $(REGISTRY)/planning-flush:latest && \
-	docker push $(REGISTRY)/planning-flush:$(VERSION) && \
-	docker push $(REGISTRY)/planning-flush:latest
-
 deploy:
 	kubectl apply -f k8s/
 	kubectl rollout restart deployment/planning-frontend -n planning
 	kubectl rollout restart deployment/planning-backend -n planning
-
-# Manually trigger the flush-redis CronJob
-trigger-flush-redis:
-	kubectl create job --from=cronjob/flush-redis flush-redis-manual -n planning
-	kubectl wait --for=condition=complete --timeout=60s job/flush-redis-manual -n planning
-	kubectl logs -l job-name=flush-redis-manual -n planning
