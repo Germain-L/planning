@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -96,4 +97,26 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setupWebSocketConnection(conn, room, userName, isGameMaster)
+}
+
+func deleteAllRooms(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ctx := context.Background()
+	iter := redisClient.Scan(ctx, 0, "room:*", 0).Iterator()
+	delKeys := []string{}
+
+	for iter.Next(ctx) {
+		delKeys = append(delKeys, iter.Val())
+	}
+
+	if len(delKeys) > 0 {
+		redisClient.Del(ctx, delKeys...)
+	}
+
+	log.Printf("Deleted %d rooms", len(delKeys))
+	w.WriteHeader(http.StatusOK)
 }

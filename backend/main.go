@@ -31,6 +31,7 @@ func setupRoutes() {
 	http.HandleFunc("/health", healthCheck)
 	http.HandleFunc("/api/create-room", corsMiddleware(createRoom))
 	http.HandleFunc("/api/ws", handleWebSocket)
+	http.HandleFunc("/api/admin/delete-rooms", adminMiddleware(deleteAllRooms))
 }
 
 func setupServer() *http.Server {

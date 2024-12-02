@@ -28,6 +28,7 @@ func setupWebSocketConnection(conn *websocket.Conn, room *Room, userName string,
 	defer handlePanic(conn, userName, room.ID)
 	handleMessages(conn, room, userName)
 }
+
 func handleMessages(conn *websocket.Conn, room *Room, userName string) {
 	for {
 		var msg Message

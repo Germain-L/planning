@@ -1,6 +1,9 @@
 package main
 
-import "net/http"
+import (
+	"net/http"
+	"os"
+)
 
 func corsMiddleware(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -10,6 +13,17 @@ func corsMiddleware(handler http.HandlerFunc) http.HandlerFunc {
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
+			return
+		}
+		handler(w, r)
+	}
+}
+
+func adminMiddleware(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		key := r.URL.Query().Get("key")
+		if key != os.Getenv("ADMIN_KEY") {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 		handler(w, r)

@@ -21,6 +21,11 @@ spec:
           env:
             - name: REDIS_ADDR
               value: "redis-master.planning.svc.cluster.local:6379"
+            - name: ADMIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: planning-secrets
+                  key: admin-key
           resources:
             requests:
               cpu: "200m"
