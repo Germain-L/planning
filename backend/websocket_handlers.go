@@ -7,20 +7,34 @@ import (
 )
 
 func setupWebSocketConnection(conn *websocket.Conn, room *Room, userName string, isGameMaster bool) {
-	// Setup close handler first to avoid race conditions
-	setupCloseHandler(conn, room, userName)
-
-	user := &User{Name: userName, Conn: conn}
-
-	room.Mu.Lock()
-	// Store connection before setting game master
-	room.Users[userName] = user
-	if isGameMaster && (room.GameMaster == "" || room.GameMaster == userName) {
-		room.GameMaster = userName
-		log.Printf("Set game master %s for room %s", userName, room.ID)
+	// Store active connections before getting fresh room state
+	activeConnections := make(map[string]*websocket.Conn)
+	room.Mu.RLock()
+	for name, user := range room.Users {
+		if user != nil && user.Conn != nil {
+			activeConnections[name] = user.Conn
+		}
 	}
-	room.Mu.Unlock()
+	room.Mu.RUnlock()
 
+	// Get fresh room state
+	updatedRoom, _ := getRoom(room.ID)
+	if updatedRoom != nil {
+		// Restore active connections
+		for name, existingConn := range activeConnections {
+			if updatedRoom.Users[name] != nil {
+				updatedRoom.Users[name].Conn = existingConn
+			}
+		}
+		// Add new user
+		updatedRoom.Users[userName] = &User{Name: userName, Conn: conn}
+		if isGameMaster {
+			updatedRoom.GameMaster = userName
+		}
+		room = updatedRoom
+	}
+
+	setupCloseHandler(conn, room, userName)
 	saveRoom(room)
 	logEvent(LogEntry{Event: "user_joined", RoomID: room.ID, User: userName})
 	broadcastRoomState(room)

@@ -85,7 +85,7 @@ func toRoomData(room *Room) RoomData {
 func fromRoomData(roomData RoomData) *Room {
 	users := make(map[string]*User)
 	for name := range roomData.Users {
-		users[name] = nil // Initialize without connection, will be set when user connects
+		users[name] = &User{Name: name} // Initialize with name only
 	}
 	return &Room{
 		ID:            roomData.ID,
