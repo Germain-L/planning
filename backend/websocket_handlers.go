@@ -7,26 +7,27 @@ import (
 )
 
 func setupWebSocketConnection(conn *websocket.Conn, room *Room, userName string, isGameMaster bool) {
+	// Setup close handler first to avoid race conditions
+	setupCloseHandler(conn, room, userName)
+
 	user := &User{Name: userName, Conn: conn}
 
 	room.Mu.Lock()
-	if isGameMaster && room.GameMaster == "" {
-		room.GameMaster = userName
-	}
+	// Store connection before setting game master
 	room.Users[userName] = user
+	if isGameMaster && (room.GameMaster == "" || room.GameMaster == userName) {
+		room.GameMaster = userName
+		log.Printf("Set game master %s for room %s", userName, room.ID)
+	}
 	room.Mu.Unlock()
 
 	saveRoom(room)
 	logEvent(LogEntry{Event: "user_joined", RoomID: room.ID, User: userName})
-
-	// Move broadcast after saving room state
 	broadcastRoomState(room)
 
-	setupCloseHandler(conn, room, userName)
 	defer handlePanic(conn, userName, room.ID)
 	handleMessages(conn, room, userName)
 }
-
 func handleMessages(conn *websocket.Conn, room *Room, userName string) {
 	for {
 		var msg Message

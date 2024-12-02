@@ -39,7 +39,9 @@ func getRoom(roomID string) (*Room, error) {
 		return nil, err
 	}
 
-	return fromRoomData(roomData), nil
+	room := fromRoomData(roomData)
+	log.Printf("Retrieved room %s with %d users", room.ID, len(room.Users))
+	return room, nil
 }
 
 func saveRoom(room *Room) error {
