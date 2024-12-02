@@ -18,6 +18,9 @@ spec:
           image: registry.germainleignel.com/personal/planning-backend:latest
           ports:
             - containerPort: 8080
+          env:
+            - name: REDIS_ADDR
+              value: "redis-master.planning.svc.cluster.local:6379"
           resources:
             requests:
               cpu: "200m"

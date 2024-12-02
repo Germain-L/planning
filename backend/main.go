@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"github.com/redis/go-redis/v9"
 )
 
 var Version = "0.1.0"
@@ -27,6 +28,15 @@ type Room struct {
 	CurrentTicket int
 	VotesRevealed bool
 	Mu            sync.RWMutex
+}
+
+type RoomData struct {
+	ID            string
+	Tickets       []Ticket
+	Users         map[string]string
+	GameMaster    string
+	CurrentTicket int
+	VotesRevealed bool
 }
 
 type Ticket struct {
@@ -56,9 +66,8 @@ type LogEntry struct {
 }
 
 var (
-	rooms    = make(map[string]*Room)
-	roomsMu  sync.RWMutex
-	upgrader = websocket.Upgrader{
+	redisClient *redis.Client
+	upgrader    = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
 			return r.Header.Get("Origin") == "https://planning.germainleignel.com"
 		},
@@ -67,6 +76,16 @@ var (
 	ErrUserExists     = errors.New("user already exists in room")
 	ErrInvalidPayload = errors.New("invalid message payload")
 )
+
+func initRedisClient() {
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		log.Fatal("REDIS_ADDR environment variable not set")
+	}
+	redisClient = redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+}
 
 func logEvent(entry LogEntry) {
 	entry.Time = time.Now()
@@ -113,9 +132,9 @@ func createRoom(w http.ResponseWriter, r *http.Request) {
 		VotesRevealed: false,
 	}
 
-	roomsMu.Lock()
-	rooms[roomID] = room
-	roomsMu.Unlock()
+	roomData := toRoomData(room)
+	roomDataBytes, _ := json.Marshal(roomData)
+	redisClient.Set(context.Background(), "room:"+roomID, roomDataBytes, 0)
 
 	logEvent(LogEntry{
 		Event:  "room_created",
@@ -137,15 +156,25 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roomsMu.RLock()
-	room, exists := rooms[roomID]
-	roomsMu.RUnlock()
-
-	if !exists {
+	roomDataBytes, err := redisClient.Get(context.Background(), "room:"+roomID).Bytes()
+	if err == redis.Nil {
 		logEvent(LogEntry{Event: "error", Error: "room_not_found", RoomID: roomID})
 		http.Error(w, "Room not found", http.StatusNotFound)
 		return
+	} else if err != nil {
+		log.Printf("Redis error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
 	}
+
+	var roomData RoomData
+	if err := json.Unmarshal(roomDataBytes, &roomData); err != nil {
+		log.Printf("Unmarshal error: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	room := fromRoomData(roomData)
 
 	room.Mu.Lock()
 	if _, exists := room.Users[userName]; exists {
@@ -165,6 +194,25 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	conn.SetCloseHandler(func(code int, text string) error {
 		log.Printf("WebSocket closed for user %s in room %s: code=%d, text=%s", userName, roomID, code, text)
+		room.Mu.Lock()
+		delete(room.Users, userName)
+		if userName == room.GameMaster {
+			room.GameMaster = ""
+			log.Printf("Game master removed from room %s", roomID)
+		}
+		room.Mu.Unlock()
+
+		roomData = toRoomData(room)
+		roomDataBytes, _ = json.Marshal(roomData)
+		redisClient.Set(context.Background(), "room:"+roomID, roomDataBytes, 0)
+
+		logEvent(LogEntry{
+			Event:  "user_left",
+			RoomID: roomID,
+			User:   userName,
+		})
+
+		broadcastRoomState(room)
 		return nil
 	})
 
@@ -181,6 +229,10 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	room.Users[userName] = user
 	room.Mu.Unlock()
 
+	roomData = toRoomData(room)
+	roomDataBytes, _ = json.Marshal(roomData)
+	redisClient.Set(context.Background(), "room:"+roomID, roomDataBytes, 0)
+
 	logEvent(LogEntry{
 		Event:  "user_joined",
 		RoomID: roomID,
@@ -193,21 +245,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		conn.Close()
-		room.Mu.Lock()
-		delete(room.Users, userName)
-		if userName == room.GameMaster {
-			room.GameMaster = ""
-			log.Printf("Game master removed from room %s", roomID)
-		}
-		room.Mu.Unlock()
-
-		logEvent(LogEntry{
-			Event:  "user_left",
-			RoomID: roomID,
-			User:   userName,
-		})
-
-		broadcastRoomState(room)
 	}()
 
 	broadcastRoomState(room)
@@ -272,6 +309,10 @@ func handleVote(room *Room, userName string, msg Message) {
 	}
 	room.Mu.Unlock()
 
+	roomData := toRoomData(room)
+	roomDataBytes, _ := json.Marshal(roomData)
+	redisClient.Set(context.Background(), "room:"+room.ID, roomDataBytes, 0)
+
 	broadcastRoomState(room)
 }
 
@@ -284,6 +325,10 @@ func handleReveal(room *Room, userName string) {
 	room.Mu.Lock()
 	room.VotesRevealed = true
 	room.Mu.Unlock()
+
+	roomData := toRoomData(room)
+	roomDataBytes, _ := json.Marshal(roomData)
+	redisClient.Set(context.Background(), "room:"+room.ID, roomDataBytes, 0)
 
 	log.Printf("Votes revealed in room %s by game master %s", room.ID, userName)
 	broadcastRoomState(room)
@@ -307,6 +352,10 @@ func handleNext(room *Room, userName string) {
 	}
 	room.Mu.Unlock()
 
+	roomData := toRoomData(room)
+	roomDataBytes, _ := json.Marshal(roomData)
+	redisClient.Set(context.Background(), "room:"+room.ID, roomDataBytes, 0)
+
 	broadcastRoomState(room)
 }
 
@@ -320,6 +369,10 @@ func broadcastRoomState(room *Room) {
 	}
 
 	for _, user := range room.Users {
+		if user.Conn == nil {
+			log.Printf("Nil WebSocket connection for user %s", user.Name)
+			continue
+		}
 		if err := user.Conn.WriteJSON(msg); err != nil {
 			log.Printf("Error broadcasting to user %s: %v", user.Name, err)
 		}
@@ -327,18 +380,76 @@ func broadcastRoomState(room *Room) {
 }
 
 func countUsers() int {
-	roomsMu.RLock()
-	defer roomsMu.RUnlock()
 	total := 0
-	for _, room := range rooms {
-		room.Mu.RLock()
-		total += len(room.Users)
-		room.Mu.RUnlock()
+	iter := redisClient.Scan(context.Background(), 0, "room:*", 0).Iterator()
+	for iter.Next(context.Background()) {
+		roomKey := iter.Val()
+		roomDataBytes, err := redisClient.Get(context.Background(), roomKey).Bytes()
+		if err != nil {
+			log.Printf("Redis error: %v", err)
+			continue
+		}
+
+		var roomData RoomData
+		if err := json.Unmarshal(roomDataBytes, &roomData); err != nil {
+			log.Printf("Unmarshal error: %v", err)
+			continue
+		}
+
+		total += len(roomData.Users)
+	}
+	if err := iter.Err(); err != nil {
+		log.Printf("Redis scan error: %v", err)
 	}
 	return total
 }
 
+func countActiveRooms() int {
+	iter := redisClient.Scan(context.Background(), 0, "room:*", 0).Iterator()
+	count := 0
+	for iter.Next(context.Background()) {
+		count++
+	}
+	if err := iter.Err(); err != nil {
+		log.Printf("Redis scan error: %v", err)
+	}
+	return count
+}
+
+func toRoomData(room *Room) RoomData {
+	users := make(map[string]string)
+	for name, user := range room.Users {
+		users[name] = user.Name
+	}
+	return RoomData{
+		ID:            room.ID,
+		Tickets:       room.Tickets,
+		Users:         users,
+		GameMaster:    room.GameMaster,
+		CurrentTicket: room.CurrentTicket,
+		VotesRevealed: room.VotesRevealed,
+	}
+}
+
+func fromRoomData(roomData RoomData) *Room {
+	users := make(map[string]*User)
+	for name := range roomData.Users {
+		users[name] = &User{Name: name}
+	}
+	return &Room{
+		ID:            roomData.ID,
+		Tickets:       roomData.Tickets,
+		Users:         users,
+		GameMaster:    roomData.GameMaster,
+		CurrentTicket: roomData.CurrentTicket,
+		VotesRevealed: roomData.VotesRevealed,
+	}
+}
+
 func main() {
+	// Initialize Redis client
+	initRedisClient()
+
 	// Setup logging
 	log.SetFlags(log.LstdFlags | log.LUTC | log.Llongfile)
 	log.Printf("Planning Backend v%s starting up", Version)
@@ -383,7 +494,7 @@ func main() {
 	// Metrics reporting
 	go func() {
 		for {
-			log.Printf("Status - Active rooms: %d, Total users: %d", len(rooms), countUsers())
+			log.Printf("Status - Active rooms: %d, Total users: %d", countActiveRooms(), countUsers())
 			time.Sleep(30 * time.Second)
 		}
 	}()
