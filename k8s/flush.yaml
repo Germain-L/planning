@@ -1,0 +1,18 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: flush-redis
+  namespace: planning
+spec:
+  schedule: "0 2 * * *"  # This will run at 2 AM every day
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: flush-redis
+            image: registry.germainleignel.com/personal/planning-flush:latest
+            env:
+            - name: REDIS_ADDR
+              value: "redis-master.planning.svc.cluster.local:6379"
+          restartPolicy: OnFailure
