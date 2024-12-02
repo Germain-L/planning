@@ -120,3 +120,37 @@ func deleteAllRooms(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Deleted %d rooms", len(delKeys))
 	w.WriteHeader(http.StatusOK)
 }
+
+func destroyRoom(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	roomID := r.URL.Query().Get("roomId")
+	userName := r.URL.Query().Get("name")
+
+	room, err := getRoom(roomID)
+	if err != nil {
+		http.Error(w, "Room not found", http.StatusNotFound)
+		return
+	}
+
+	if room.GameMaster != userName {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Close all websocket connections
+	room.Mu.Lock()
+	for _, user := range room.Users {
+		if user.Conn != nil {
+			user.Conn.Close()
+		}
+	}
+	room.Mu.Unlock()
+
+	// Delete room from Redis
+	redisClient.Del(context.Background(), "room:"+roomID)
+	w.WriteHeader(http.StatusOK)
+}

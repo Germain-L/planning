@@ -7,39 +7,34 @@ import (
 )
 
 func setupWebSocketConnection(conn *websocket.Conn, room *Room, userName string, isGameMaster bool) {
-	// Store active connections before getting fresh room state
-	activeConnections := make(map[string]*websocket.Conn)
-	room.Mu.RLock()
-	for name, user := range room.Users {
-		if user != nil && user.Conn != nil {
-			activeConnections[name] = user.Conn
-		}
-	}
-	room.Mu.RUnlock()
+	user := &User{Name: userName, Conn: conn}
+	activeConnections.Store(room.ID+":"+userName, conn)
 
-	// Get fresh room state
-	updatedRoom, _ := getRoom(room.ID)
-	if updatedRoom != nil {
-		// Restore active connections
-		for name, existingConn := range activeConnections {
-			if updatedRoom.Users[name] != nil {
-				updatedRoom.Users[name].Conn = existingConn
-			}
-		}
-		// Add new user
-		updatedRoom.Users[userName] = &User{Name: userName, Conn: conn}
-		if isGameMaster {
-			updatedRoom.GameMaster = userName
-		}
-		room = updatedRoom
+	room.Mu.Lock()
+	room.Users[userName] = user
+	if isGameMaster {
+		room.GameMaster = userName
 	}
+	room.Mu.Unlock()
 
-	setupCloseHandler(conn, room, userName)
 	saveRoom(room)
 	logEvent(LogEntry{Event: "user_joined", RoomID: room.ID, User: userName})
-	broadcastRoomState(room)
 
-	defer handlePanic(conn, userName, room.ID)
+	// Restore all active connections while preserving votes
+	room.Mu.Lock()
+	for name := range room.Users {
+		if conn, ok := activeConnections.Load(room.ID + ":" + name); ok {
+			room.Users[name].Conn = conn.(*websocket.Conn)
+		}
+	}
+	room.Mu.Unlock()
+
+	setupCloseHandler(conn, room, userName)
+	broadcastRoomState(room)
+	defer func() {
+		activeConnections.Delete(room.ID + ":" + userName)
+		handlePanic(conn, userName, room.ID)
+	}()
 	handleMessages(conn, room, userName)
 }
 
@@ -62,6 +57,8 @@ func handleMessages(conn *websocket.Conn, room *Room, userName string) {
 			handleReveal(room, userName)
 		case "next":
 			handleNext(room, userName)
+		case "previous":
+			handlePrevious(room, userName)
 		default:
 			log.Printf("Unknown message type from user %s in room %s: %s", userName, room.ID, msg.Type)
 		}
@@ -110,20 +107,32 @@ func handleVote(room *Room, userName string, msg Message) {
 	}
 
 	vote := int(voteFloat)
+	currentRoom, err := getRoom(room.ID)
+	if err != nil {
+		log.Printf("Error getting room %s: %v", room.ID, err)
+		return
+	}
 
-	room.Mu.Lock()
-	if ticketID == room.Tickets[room.CurrentTicket].ID {
-		for i, ticket := range room.Tickets {
-			if ticket.ID == ticketID {
-				room.Tickets[i].Votes[userName] = vote
-				break
-			}
+	currentRoom.Mu.Lock()
+	for i, ticket := range currentRoom.Tickets {
+		if ticket.ID == ticketID {
+			currentRoom.Tickets[i].Votes[userName] = vote
+			break
 		}
 	}
-	room.Mu.Unlock()
+	currentRoom.Mu.Unlock()
 
-	saveRoom(room)
-	broadcastRoomState(room)
+	// Update connections while preserving votes
+	currentRoom.Mu.Lock()
+	for name := range currentRoom.Users {
+		if conn, ok := activeConnections.Load(currentRoom.ID + ":" + name); ok {
+			currentRoom.Users[name].Conn = conn.(*websocket.Conn)
+		}
+	}
+	currentRoom.Mu.Unlock()
+
+	saveRoom(currentRoom)
+	broadcastRoomState(currentRoom)
 }
 
 func handleReveal(room *Room, userName string) {
@@ -131,12 +140,23 @@ func handleReveal(room *Room, userName string) {
 		return
 	}
 
-	room.Mu.Lock()
-	room.VotesRevealed = true
-	room.Mu.Unlock()
+	currentRoom, err := getRoom(room.ID)
+	if err != nil {
+		log.Printf("Error getting room %s: %v", room.ID, err)
+		return
+	}
 
-	saveRoom(room)
-	broadcastRoomState(room)
+	currentRoom.Mu.Lock()
+	for name := range currentRoom.Users {
+		if conn, ok := activeConnections.Load(currentRoom.ID + ":" + name); ok {
+			currentRoom.Users[name].Conn = conn.(*websocket.Conn)
+		}
+	}
+	currentRoom.VotesRevealed = true
+	currentRoom.Mu.Unlock()
+
+	saveRoom(currentRoom)
+	broadcastRoomState(currentRoom)
 }
 
 func handleNext(room *Room, userName string) {
@@ -144,13 +164,51 @@ func handleNext(room *Room, userName string) {
 		return
 	}
 
-	room.Mu.Lock()
-	if room.CurrentTicket < len(room.Tickets)-1 {
-		room.CurrentTicket++
-		room.VotesRevealed = false
+	currentRoom, err := getRoom(room.ID)
+	if err != nil {
+		log.Printf("Error getting room %s: %v", room.ID, err)
+		return
 	}
-	room.Mu.Unlock()
 
-	saveRoom(room)
-	broadcastRoomState(room)
+	currentRoom.Mu.Lock()
+	if currentRoom.CurrentTicket < len(currentRoom.Tickets)-1 {
+		currentRoom.CurrentTicket++
+		currentRoom.VotesRevealed = false
+	}
+	for name := range currentRoom.Users {
+		if conn, ok := activeConnections.Load(currentRoom.ID + ":" + name); ok {
+			currentRoom.Users[name].Conn = conn.(*websocket.Conn)
+		}
+	}
+	currentRoom.Mu.Unlock()
+
+	saveRoom(currentRoom)
+	broadcastRoomState(currentRoom)
+}
+
+func handlePrevious(room *Room, userName string) {
+	if room.GameMaster != userName {
+		return
+	}
+
+	currentRoom, err := getRoom(room.ID)
+	if err != nil {
+		log.Printf("Error getting room %s: %v", room.ID, err)
+		return
+	}
+
+	currentRoom.Mu.Lock()
+	if currentRoom.CurrentTicket > 0 {
+		currentRoom.CurrentTicket--
+		currentRoom.VotesRevealed = false
+	}
+	for name := range currentRoom.Users {
+		if conn, ok := activeConnections.Load(currentRoom.ID + ":" + name); ok {
+			currentRoom.Users[name].Conn = conn.(*websocket.Conn)
+		}
+	}
+	currentRoom.Mu.Unlock()
+
+	saveRoom(currentRoom)
+	broadcastRoomState(currentRoom)
 }

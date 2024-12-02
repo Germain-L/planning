@@ -32,6 +32,7 @@ func setupRoutes() {
 	http.HandleFunc("/api/create-room", corsMiddleware(createRoom))
 	http.HandleFunc("/api/ws", handleWebSocket)
 	http.HandleFunc("/api/admin/delete-rooms", adminMiddleware(deleteAllRooms))
+	http.HandleFunc("/api/destroy-room", corsMiddleware(destroyRoom))
 }
 
 func setupServer() *http.Server {

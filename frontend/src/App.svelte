@@ -1,6 +1,6 @@
 <script>
   import { onMount } from "svelte";
-  import { version } from '../package.json'
+  import { version } from "../package.json";
 
   let name = "";
   let tickets = "";
@@ -31,13 +31,16 @@
         throw new Error("Please enter at least one ticket ID");
       }
 
-      const response = await fetch(`https://${window.location.host}/api/create-room`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ticketIds: tickets.split("\n").filter((t) => t.trim()),
-        }),
-      });
+      const response = await fetch(
+        `https://${window.location.host}/api/create-room`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticketIds: tickets.split("\n").filter((t) => t.trim()),
+          }),
+        },
+      );
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -141,6 +144,31 @@
     connectWebSocket();
     creating = false;
     window.history.pushState({}, "", `?roomId=${roomId}`);
+  }
+
+  function previousTicket() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      errorMessage = "Connection lost. Please refresh the page.";
+      return;
+    }
+    ws.send(JSON.stringify({ type: "previous" }));
+  }
+
+  async function destroyRoom() {
+    try {
+      const response = await fetch(
+        `https://${window.location.host}/api/destroy-room?roomId=${roomId}&name=${name}`,
+        { method: "DELETE" },
+      );
+
+      if (!response.ok) {
+        throw new Error("Failed to destroy room");
+      }
+
+      window.location.href = window.location.pathname;
+    } catch (error) {
+      errorMessage = `Error: ${error.message}`;
+    }
   }
 </script>
 
@@ -257,7 +285,7 @@
 
         {#if !isGameMaster}
           <div class="voting-panel">
-            {#each [0, 1, 2, 3, 5, 8, 13, 20, 40, 100, '?'] as score}
+            {#each [0, 1, 2, 3, 5, 8, 13, 20, 40, 100, "?"] as score}
               <button
                 class="vote-button {roomState.Tickets[roomState.CurrentTicket]
                   .Votes[name] === score
@@ -296,11 +324,21 @@
               Reveal Votes
             </button>
             <button
+              on:click={previousTicket}
+              disabled={roomState.CurrentTicket <= 0}
+              class="previous-button"
+            >
+              Previous
+            </button>
+            <button
               on:click={nextTicket}
               disabled={roomState.CurrentTicket >= roomState.Tickets.length - 1}
               class="next-button"
             >
-              Next Ticket
+              Next
+            </button>
+            <button on:click={destroyRoom} class="destroy-button">
+              Destroy Room
             </button>
           </div>
         {/if}
@@ -478,9 +516,24 @@
 
   .control-panel {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
     margin-top: 1.5rem;
+  }
+
+  .previous-button {
+    background: #666;
+    color: white;
+    padding: 0.75rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+  }
+
+  .previous-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .reveal-button,
@@ -509,10 +562,23 @@
   }
 
   .version {
-  position: fixed;
-  bottom: 1rem;
-  right: 1rem;
-  font-size: 0.8rem;
-  color: #666;
-}
+    position: fixed;
+    bottom: 1rem;
+    right: 1rem;
+    font-size: 0.8rem;
+    color: #666;
+  }
+  .destroy-button {
+    background: #dc3545;
+    color: white;
+    padding: 0.75rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 500;
+  }
+
+  .destroy-button:hover {
+    background: #bb2d3b;
+  }
 </style>

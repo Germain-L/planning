@@ -7,6 +7,10 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var (
+	activeConnections sync.Map // Store connections globally
+)
+
 type Room struct {
 	ID            string
 	Tickets       []Ticket
