@@ -18,7 +18,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var Version = "0.1.0"
+var Version = "0.1.1"
 
 type Room struct {
 	ID            string
@@ -192,6 +192,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("WebSocket connection initialized for user %s in room %s", userName, roomID)
+
 	conn.SetCloseHandler(func(code int, text string) error {
 		log.Printf("WebSocket closed for user %s in room %s: code=%d, text=%s", userName, roomID, code, text)
 		room.Mu.Lock()
@@ -245,6 +247,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 
 		conn.Close()
+		log.Printf("WebSocket connection closed for user %s in room %s", userName, roomID)
 	}()
 
 	broadcastRoomState(room)
