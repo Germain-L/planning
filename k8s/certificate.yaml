@@ -1,13 +1,12 @@
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
-  name: planning-certificate
-  namespace: planning
+  name: poker-certificate
+  namespace: poker
 spec:
-  secretName: planning-tls
+  secretName: poker-tls
   issuerRef:
     name: letsencrypt-prod
     kind: ClusterIssuer
   dnsNames:
-  - planning.germainleignel.com
-
+  - poker.germainleignel.com

@@ -1,31 +1,23 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: planning-ingress
-  namespace: planning
+  name: poker-ingress
+  namespace: poker
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   ingressClassName: traefik
   tls:
     - hosts:
-        - planning.germainleignel.com
-      secretName: planning-tls
+        - poker.germainleignel.com
+      secretName: poker-tls
   rules:
-    - host: planning.germainleignel.com
+    - host: poker.germainleignel.com
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: planning-frontend
+                name: poker-service
                 port:
                   number: 80
-          - path: /api
-            pathType: Prefix
-            backend:
-              service:
-                name: planning-backend
-                port:
-                  number: 8080

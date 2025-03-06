@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: poker-deployment
+  namespace: poker
+  labels:
+    app: poker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: poker
+  template:
+    metadata:
+      labels:
+        app: poker
+    spec:
+      containers:
+      - name: poker
+        image: registry.germainleignel.com/personal/poker:latest
+        ports:
+        - containerPort: 3000
+          name: http
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 20

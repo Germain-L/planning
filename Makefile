@@ -1,27 +1,34 @@
-REGISTRY=registry.germainleignel.com/personal
-VERSION=$(shell date +%Y%m%d-%H%M%S)
+# Project name
+PROJECT_NAME := poker
 
-.PHONY: all backend frontend deploy
+# Docker image name
+DOCKER_IMAGE_NAME := $(PROJECT_NAME)
 
-all: backend frontend flush deploy
+# Docker tag
+DOCKER_TAG := latest
 
-backend:
-	cd backend && \
-	docker build -t planning-backend . && \
-	docker tag planning-backend $(REGISTRY)/planning-backend:$(VERSION) && \
-	docker tag planning-backend $(REGISTRY)/planning-backend:latest && \
-	docker push $(REGISTRY)/planning-backend:$(VERSION) && \
-	docker push $(REGISTRY)/planning-backend:latest
+# Docker image full name
+DOCKER_IMAGE := registry.germainleignel.com/personal/poker:latest
 
-frontend:
-	cd frontend && \
-	docker build -t planning-frontend . && \
-	docker tag planning-frontend $(REGISTRY)/planning-frontend:$(VERSION) && \
-	docker tag planning-frontend $(REGISTRY)/planning-frontend:latest && \
-	docker push $(REGISTRY)/planning-frontend:$(VERSION) && \
-	docker push $(REGISTRY)/planning-frontend:latest
+# Kubernetes deployment name
+K8S_DEPLOYMENT_NAME := poker-deployment
+
+.PHONY: all build push deploy restart
+
+all: build push deploy restart
+
+build:
+	docker build -t $(DOCKER_IMAGE_NAME) .
+
+push:
+	docker tag $(DOCKER_IMAGE_NAME):$(DOCKER_TAG) $(DOCKER_IMAGE)
+	docker push $(DOCKER_IMAGE)
 
 deploy:
-	kubectl apply -f k8s/
-	kubectl rollout restart deployment/planning-frontend -n planning
-	kubectl rollout restart deployment/planning-backend -n planning
+	kubectl apply -f k8s/certificate.yaml -n poker
+	kubectl apply -f k8s/deployment.yaml -n poker
+	kubectl apply -f k8s/service.yaml -n poker
+	kubectl apply -f k8s/ingress.yaml -n poker
+
+restart:
+	kubectl rollout restart deployment $(K8S_DEPLOYMENT_NAME) -n poker
